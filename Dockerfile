@@ -7,7 +7,7 @@ RUN sed -i '/deb http:\/\/httpredir.debian.org\/debian jessie-updates main/d' /e
 
 RUN set -ex \
    && apt-get -o Acquire::Check-Valid-Until=false update \
-   && apt-get install rlwrap \
+   && apt-get install -y rlwrap gettext \
    && curl -o nodejs.deb https://deb.nodesource.com/node_0.12/pool/main/n/nodejs/nodejs_0.12.14-1nodesource1~jessie1_amd64.deb  \
    && dpkg -i ./nodejs.deb \
    && rm nodejs.deb \

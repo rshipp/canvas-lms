@@ -1,8 +1,10 @@
 common: &common
   adapter: postgresql
-  host: canvasdb
+  host: ${DATABASE_URL}
+  database: ${DATABASE_NAME}
+  username: ${DATABASE_USER}
+  password: ${DATABASE_PASSWORD}
   encoding: utf8
-  username: canvas
   timeout: 5000
   prepared_statements: false
 
