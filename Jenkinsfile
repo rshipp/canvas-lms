@@ -19,3 +19,4 @@ sudo docker push 958491237157.dkr.ecr.us-west-2.amazonaws.com/portal:${VERSION_T
     pollSCM('* * * * *')
   }
 }
+}
