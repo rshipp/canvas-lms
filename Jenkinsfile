@@ -15,8 +15,8 @@ sudo docker tag portal 958491237157.dkr.ecr.us-west-2.amazonaws.com/portal:${VER
 sudo docker push 958491237157.dkr.ecr.us-west-2.amazonaws.com/portal:${VERSION_TAG}'''
       }
     }
+  }
   triggers {
     pollSCM('* * * * *')
   }
-}
 }
