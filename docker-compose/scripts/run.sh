@@ -26,6 +26,10 @@ cp -a /app/docker-compose/config/* /app/config/
 envsubst < /app/config/database.yml > /app/config/database.yml
 envsubst < /app/config/redis.yml > /app/config/redis.yml
 
+cat /app/config/database.yml
+
+sleep 600
+
 # Not sure exactly why I need this, but after stopping and starting the container it dies with
 # an error saying i have to run this.  So just do it.
 bundle exec rake db:reset_encryption_key_hash
