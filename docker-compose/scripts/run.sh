@@ -23,12 +23,8 @@ fi
 
 cp -a /app/docker-compose/config/* /app/config/
 
-envsubst < /app/config/database.yml > /app/config/database.yml
-envsubst < /app/config/redis.yml > /app/config/redis.yml
-
-cat /app/config/database.yml
-
-sleep 600
+envsubst < /app/docker-compose/config/database.yml > /app/config/database.yml
+envsubst < /app/docker-compose/config/redis.yml > /app/config/redis.yml
 
 # Not sure exactly why I need this, but after stopping and starting the container it dies with
 # an error saying i have to run this.  So just do it.
