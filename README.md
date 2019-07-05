@@ -204,3 +204,34 @@ on our wiki.
 
  * [Quick Start](http://github.com/instructure/canvas-lms/wiki/Quick-Start)
  * [Production Start](http://github.com/instructure/canvas-lms/wiki/Production-Start)
+ 
+## Docker Setup
+
+to run this on docker need to expose below variables as env variabels
+
+DATABASE_NAME
+
+DATABASE_USER
+
+DATABASE_PASSWORD
+
+DATABASE_URL
+
+REDIS
+
+default values are set in docker-compose.yml file
+
+docker-compose/scripts/run.sh script will pass those variables in to the yaml app config files
+
+to start in local
+
+```docker-compose up -d```
+
+application will be availabe on http://localhost:3000
+
+to change application config update docker-compose/config folder with config you need and
+
+```Shell
+docker-compose down -v
+docker-compose up -d
+```
