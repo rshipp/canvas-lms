@@ -4,6 +4,6 @@ database:
   database: ${DATABASE_NAME}
   username: ${DATABASE_USER}
   password: ${DATABASE_PASSWORD}
-  host: ${DATABASE_URL}
+  host: ${DATABASE_HOST}
   timeout: 5000
   prepared_statements: false
