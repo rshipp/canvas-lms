@@ -51,7 +51,7 @@ elsif RUBY_VERSION >= "2.3.1" && RUBY_VERSION < "2.4"
   puts "Ruby 2.3 support is untested"
   ruby RUBY_VERSION, :engine => 'ruby', :engine_version => RUBY_VERSION
 else
-  ruby '2.1.6', :engine => 'ruby', :engine_version => '2.1.6'
+  ruby '2.1.9', :engine => 'ruby', :engine_version => '2.1.9'
 end
 
 # force a different lockfile for rails 4.2
