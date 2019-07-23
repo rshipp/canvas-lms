@@ -17,7 +17,9 @@
 #
 
 # # enforce the version of bundler itself, to avoid any surprises
-req_bundler_version_floor, req_bundler_version_ceiling = '1.8.0', '1.11.2'
+# Note that Heroku doesn't let you configure the bundle version. They use 1.15.2 for Gemfile's that specify 1.x:
+# https://devcenter.heroku.com/articles/ruby-support#libraries
+req_bundler_version_floor, req_bundler_version_ceiling = '1.8.0', '1.15.2'
 bundler_requirements = [">=#{req_bundler_version_floor}",
                         "<=#{req_bundler_version_ceiling}"]
 gem 'bundler', bundler_requirements
