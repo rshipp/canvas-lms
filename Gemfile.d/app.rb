@@ -114,7 +114,7 @@ gem 'adheres_to_policy', path: '../gems/adheres_to_policy'
 gem 'attachment_fu', path: '../gems/attachment_fu'
 gem 'autoextend', path: '../gems/autoextend'
 gem 'bookmarked_collection', path: '../gems/bookmarked_collection'
-gem 'broadcast_policy', path: "gems/broadcast_policy"
+gem 'broadcast_policy', path: "../gems/broadcast_policy"
 gem 'canvas_breach_mitigation', path: '../gems/canvas_breach_mitigation'
 gem 'canvas_color', path: '../gems/canvas_color'
 gem 'canvas_crummy', path: '../gems/canvas_crummy'
