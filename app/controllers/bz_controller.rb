@@ -14,8 +14,80 @@ class BzController < ApplicationController
   # magic field dump / for cohorts uses an access token instead
   # and courses_for_email is unauthenticated since it isn't really sensitive
   # user_retained_data_batch is sensitive, but it can also be done via access_token
-  before_filter :require_user, :except => [:magic_field_dump, :courses_for_email, :magic_fields_for_cohort, :course_cohort_information, :user_retained_data_batch]
-  skip_before_filter :verify_authenticity_token, :only => [:last_user_url, :set_user_retained_data, :delete_user, :user_retained_data_batch]
+  before_filter :require_user, :except => [:magic_field_dump, :courses_for_email, :magic_fields_for_cohort, :course_cohort_information, :user_retained_data_batch, :prepare_qualtrics_links]
+  skip_before_filter :verify_authenticity_token, :only => [:last_user_url, :set_user_retained_data, :delete_user, :user_retained_data_batch, :prepare_qualtrics_links]
+
+
+  # used by the pdf annotator
+  def submission_comment
+    existing = SubmissionComment.where(
+      :author_id => @current_user.id,
+      :submission_id => params[:submission_id],
+      :attached_to => params[:attachment_id],
+      :x => params[:x],
+      :y => params[:y]
+    )
+    comment = nil
+    if existing.any?
+      comment = existing.first
+    else
+      comment = SubmissionComment.new
+      comment.author_id = @current_user.id
+      comment.submission_id = params[:submission_id]
+      comment.attached_to = params[:attachment_id]
+      comment.x = params[:x]
+      comment.y = params[:y]
+    end
+
+    if params[:comment].blank?
+      comment.destroy
+    else
+      comment.comment = params[:comment]
+      comment.save
+    end
+
+    render :json => comment.to_json
+  end
+
+  # I need to add the coordinates info to the comment model and use
+  # that in here and a custom function to add it or something.
+  def pdf_annotator
+    attachment_id = params[:attachment_id]
+
+    if Attachment.local_storage?
+      data = File.read(Attachment.find(attachment_id).full_filename)
+    else
+      url = Attachment.find(attachment_id).download_url
+      data = Net::HTTP.get(URI.parse(url))
+    end
+
+    submission = Submission.find(params[:submission_id])
+
+    comments_html = ''
+    count = 0
+    submission.submission_comments.each do |comment|
+      next if comment.x.nil?
+      next if comment.comment.nil?
+      next if comment.attached_to.to_s != attachment_id.to_s
+      count += 1
+      comments_html += '<div class="point '+(params[:highlight].to_s == comment.id.to_s ? 'highlighted' : '')+'" style="left: '+(comment.x).to_s+'px; top: '+(comment.y).to_s+'px;" title="'+CGI.escapeHTML(comment.comment)+'" data-x="'+comment.x.to_s+'" data-y="'+comment.y.to_s+'">'+count.to_s+'</div>'
+    end
+
+    image_data = nil
+
+    IO::popen('convert -density 300 -scale x1200 -append - png:-', 'r+') do |io|
+      io.write(data)
+      io.close_write
+      image_data = io.read
+    end
+
+    readonly = false
+    if params[:readonly]
+      readonly = true
+    end
+
+    render :text => '<!DOCTYPE html><html><head><link rel="stylesheet" href="/bz_annotator.css?v3" /></head><body><div id="resume"><img src="data:image/png;base64,' + Base64.encode64(image_data) + '" />'+comments_html+'<div id="commentary"><textarea></textarea><button class="save" type="button">Save</button><button class="cancel" type="button">Cancel</button><button class="delete">Delete</button></div></div><script>var submission_id='+submission.id.to_s+';var authtoken="'+form_authenticity_token+'"; var count='+count.to_s+'; var attachment_id='+attachment_id.to_s+'; var readonly='+readonly.to_s+';</script><script src="/bz_annotator.js?v3"></script></body></html>';
+  end
 
   # this is meant to be used for requests from external services like LL kits
   # to see what courses the user is in. SSO just gives email, and server side, there
@@ -1176,7 +1248,6 @@ class BzController < ApplicationController
       end
     end
 
-
     def get_current_employer(currentPositionsNode)
       cp = current_positions(currentPositionsNode)
       return nil if cp.length == 0
@@ -1433,4 +1504,451 @@ class BzController < ApplicationController
 
     redirect_to "/courses/#{@course.id}/dynamic_syllabus"
   end
+
+
+  # DOCUSIGN STUFF
+  def docusign_authorize
+    if @current_user.id != 1
+      raise Exception.new "log in as the admin account to do this setup task"
+    end
+
+    url = "https://#{BeyondZConfiguration.docusign_host}/oauth/auth?" +
+      "response_type=code&" +
+      "scope=signature%20extended&" +
+      "prompt=login&" + 
+      "client_id=#{BeyondZConfiguration.docusign_api_key}&" +
+      "redirect_uri=#{URI::encode(BeyondZConfiguration.docusign_return_url.sub('docusign_user_redirect', 'docusign_redirect'))}"
+
+    redirect_to url
+  end
+
+  # this is where docusign redirects TO after an auth
+  def docusign_redirect
+    if @current_user.id != 1
+      raise Exception.new "log in as the admin account to do this setup task"
+    end
+
+    code = params[:code]
+
+    url = URI.parse("https://#{BeyondZConfiguration.docusign_host}/oauth/token")
+
+    data = "grant_type=authorization_code&code=#{URI::encode(code)}"
+
+    headers = {}
+    headers["Content-Type"] = "application/x-www-form-urlencoded"
+    headers["Authorization"] = "Basic #{Base64.strict_encode64("#{BeyondZConfiguration.docusign_api_key}" + ":" + "#{BeyondZConfiguration.docusign_api_secret}")}"
+
+    account = Account.find(1)
+
+    http = Net::HTTP.new(url.host, url.port)
+    http.use_ssl = true
+    request = Net::HTTP::Post.new(url.request_uri, headers)
+    request.body = data
+
+    response = http.request(request)
+    answer = JSON.parse(response.body)
+
+    access_token = answer["access_token"]
+    # and also time to get the user info and save that too
+
+    url = URI.parse("https://#{BeyondZConfiguration.docusign_host}/oauth/userinfo")
+    headers = {}
+    headers["Authorization"] = "Bearer #{access_token}"
+    request = Net::HTTP::Get.new(url.request_uri, headers)
+    response = http.request(request)
+    second_answer = JSON.parse(response.body)
+
+    # You will need the account_id and the base_uri claims of the user that your application is acting on behalf on to make calls to the DocuSign API. 
+    # it is under response.accounts[0]
+
+    # access_token, token_type, refresh_token, expires_in
+    # need to save that stuff for later
+
+    account.docusign_access_token = answer["access_token"]
+    account.docusign_refresh_token = answer["refresh_token"]
+    account.docusign_account_id = second_answer["accounts"][0]["account_id"]
+    account.docusign_base_uri = second_answer["accounts"][0]["base_uri"]
+    account.docusign_token_expiration = DateTime.now + answer["expires_in"].to_i.seconds
+
+    account.save
+
+    render :text => "Docusign Account ready!"
+
+  end
+
+  def docusign_for_user
+    doc = {}
+    doc["emailSubject"] = "Please sign this for Braven"
+    doc["compositeTemplates"] = [
+      {
+        "compositeTemplateId" => "1",
+        "serverTemplates" => [
+          {
+            "sequence" => "1",
+            "templateId" => @current_user.docusign_template_id
+
+          }
+        ],
+        "inlineTemplates" => [
+          {
+            "sequence" => "1",
+            "recipients" => {
+              "signers" => [
+                {
+                  "email" => @current_user.email,
+                  "name" => @current_user.name,
+                  "recipientId" => "1",
+                  "routingOrder" => "1",
+                  "roleName" => "signer",
+                  "clientUserId" => "portal_#{@current_user.id}"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+    doc["status"] = "sent"
+
+    account = Account.find(1)
+
+    if account.docusign_token_expiration < (DateTime.now + 1.days)
+      docusign_consume_refresh_token
+      account = Account.find(1)
+    end
+
+    url = URI.parse("#{account.docusign_base_uri}/restapi/v2/accounts/#{account.docusign_account_id}/envelopes")
+
+    data = doc.to_json
+
+    headers = {}
+    headers["Content-Type"] = "application/json"
+    headers["Authorization"] = "Bearer #{account.docusign_access_token}"
+
+    account = Account.find(1)
+
+    http = Net::HTTP.new(url.host, url.port)
+    http.use_ssl = true
+    request = Net::HTTP::Post.new(url.request_uri, headers)
+    request.body = data
+
+    response = http.request(request)
+    answer = JSON.parse(response.body)
+
+    # now time to begin the signing process
+
+    envelope_id = answer["envelopeId"]
+
+    headers = {}
+    headers["Content-Type"] = "application/json"
+    headers["Authorization"] = "Bearer #{account.docusign_access_token}"
+
+    doc = {
+      "returnUrl" => "#{BeyondZConfiguration.docusign_return_url}",
+      "authenticationMethod" => "none",
+      "email" => @current_user.email,
+      "userName" => @current_user.name,
+      "clientUserId" => "portal_#{@current_user.id}"
+    }
+
+    url = URI.parse("#{account.docusign_base_uri}/restapi/v2/accounts/#{account.docusign_account_id}/envelopes/#{envelope_id}/views/recipient")
+
+    request = Net::HTTP::Post.new(url.request_uri, headers)
+    request.body = doc.to_json
+
+    response = http.request(request)
+    answer = JSON.parse(response.body)
+
+    @link = answer["url"]
+
+    # renders a view for the user
+  end
+
+  def docusign_user_redirect
+    event = params[:event]
+
+    if event == 'signing_complete'
+      @current_user.accept_terms
+      @current_user.save
+      redirect_to(post_terms_accept_url)
+    else
+      render :text => "Sorry, but to access this system, you must sign the documentation. If you have concerns about it or believe you are seeing this message in error, please contact Braven."
+    end
+  end
+
+  def docusign_consume_refresh_token
+    account = Account.find(1)
+
+    url = URI.parse("https://#{BeyondZConfiguration.docusign_host}/oauth/token")
+
+    Rails.logger.error "The DocuSign token has expired. Go here to refresh it: <domain>/bz/docusign_authorize" if account.docusign_refresh_token.nil?
+    data = "grant_type=refresh_token&refresh_token=#{URI::encode(account.docusign_refresh_token)}"
+
+    headers = {}
+    headers["Content-Type"] = "application/x-www-form-urlencoded"
+    headers["Authorization"] = "Basic #{Base64.strict_encode64("#{BeyondZConfiguration.docusign_api_key}" + ":" + "#{BeyondZConfiguration.docusign_api_secret}")}"
+
+    http = Net::HTTP.new(url.host, url.port)
+    http.use_ssl = true
+    request = Net::HTTP::Post.new(url.request_uri, headers)
+    request.body = data
+
+    response = http.request(request)
+    answer = JSON.parse(response.body)
+
+    account.docusign_access_token = answer["access_token"]
+    account.docusign_refresh_token = answer["refresh_token"]
+    account.docusign_token_expiration = DateTime.now + answer["expires_in"].to_i.seconds
+
+    account.save
+  end
+  # end docusign
+
+  # qualtrics
+  def prepare_qualtrics_links
+    # this is meant to be called from the join server's sync to lms, so it does the
+    # access token for permission check
+
+    access_token = AccessToken.authenticate(params[:access_token])
+    if access_token.nil?
+      render :json => "Access denied"
+      return
+    end
+
+    requesting_user = access_token.user
+    if requesting_user.id != 1
+      render :json => "Not admin"
+      return
+    end
+
+    course_id = params[:course_id]
+
+    if course_id.blank?
+      render :json => "no course id"
+      return
+    end
+
+    course = Course.find(course_id)
+
+    # I need to go through all the students in the course and if they don't already have
+    # a qualtrics link, go ahead and make one for them via a qualtrics mailing list.
+
+    # the survey ids...
+    preaccel_id = params[:preaccel_id]
+    postaccel_id = params[:postaccel_id]
+
+    if preaccel_id.blank? && postaccel_id.blank?
+      render :json => "no survey id"
+      return
+    end
+
+    preaccel_students = []
+    postaccel_students = []
+
+    course.students.active.each do |student|
+      unless preaccel_id.blank?
+        r = RetainedData.get_for_course(course_id, student.id, "qualtrics_link_preaccelerator_survey")
+        if r.nil?
+          preaccel_students << student
+        end
+      end
+
+      unless postaccel_id.blank?
+        r = RetainedData.get_for_course(course_id, student.id, "qualtrics_link_postaccelerator_survey")
+        if r.nil?
+          postaccel_students << student
+        end
+      end
+    end
+
+    all_new_students = preaccel_students | postaccel_students
+
+    if all_new_students.empty?
+      render :json => "no new students"
+      return
+    end
+
+
+    # create the list for this sync
+    # see: https://api.qualtrics.com/reference#create-mailing-lists
+    data = {}
+    data["libraryId"] = BeyondZConfiguration.qualtrics_library_id
+    data["name"] = "#{course.course_code} via sync #{DateTime.now}"
+ 
+    url = URI.parse("https://#{BeyondZConfiguration.qualtrics_host}/API/v3/mailinglists")
+
+    headers = {}
+    headers["Content-Type"] = "application/json"
+    headers["X-API-TOKEN"] = BeyondZConfiguration.qualtrics_api_token
+
+    http = Net::HTTP.new(url.host, url.port)
+    http.use_ssl = true
+    request = Net::HTTP::Post.new(url.request_uri, headers)
+    request.body = data.to_json
+
+    response = http.request(request)
+    obj = JSON.parse(response.body)
+
+    if obj["meta"]["httpStatus"] != '200 - OK'
+      raise Exception.new response.body
+    end
+    Rails.logger.info response.body
+
+    mailing_list_id = obj["result"]["id"]
+
+    # add the necessary students to this list
+    # see: https://api.qualtrics.com/reference#create-contacts-import
+
+    additional_data_from_join_server = JSON.parse(params[:additional_data])
+
+    sync = {}
+    sync["contacts"] = []
+    all_new_students.each do |student|
+      s = {}
+      s["unsubscribed"] = 0
+      s["firstName"] = student.first_name
+      s["lastName"] = student.last_name
+      s["email"] = student.email
+      s["language"] = "EN"
+
+      ed = {}
+      if additional_data_from_join_server[student.id]
+        ed["Site"] = additional_data_from_join_server[student.id]["site"]
+        ed["Student ID"] = additional_data_from_join_server[student.id]["student_id"]
+        ed["Salesforce ID"] = additional_data_from_join_server[student.id]["salesforce_id"]
+      end
+
+      s["embeddedData"] = ed
+
+      sync["contacts"] << s
+    end
+
+ 
+    url = URI.parse("https://#{BeyondZConfiguration.qualtrics_host}/API/v3/mailinglists/#{mailing_list_id}/contactimports")
+
+    headers = {}
+    headers["Content-Type"] = "application/json"
+    headers["X-API-TOKEN"] = BeyondZConfiguration.qualtrics_api_token
+
+    request = Net::HTTP::Post.new(url.request_uri, headers)
+    request.body = sync.to_json
+
+    response = http.request(request)
+    obj = JSON.parse(response.body)
+    if obj["meta"]["httpStatus"] != '200 - OK'
+      raise Exception.new response.body
+    end
+
+      Rails.logger.info response.body
+
+    # now create the links for the people...
+    # see https://api.qualtrics.com/reference#distribution-create-1
+    # (if it doesn't jump, go to "Generate Distribution Links" header)
+
+    do_qualtrics_list(course_id, http, mailing_list_id, preaccel_students, preaccel_id, "qualtrics_link_preaccelerator_survey", "Pre-accelerator")
+    do_qualtrics_list(course_id, http, mailing_list_id, postaccel_students, postaccel_id, "qualtrics_link_postaccelerator_survey", "Post-accelerator")
+
+    render :json => "success"
+  end
+
+  def fetch_qualtrics_links(http, create_id, survey_id) 
+    url = URI.parse("https://#{BeyondZConfiguration.qualtrics_host}/API/v3/distributions/#{create_id}/links?surveyId=" + survey_id)
+
+    headers = {}
+    headers["X-API-TOKEN"] = BeyondZConfiguration.qualtrics_api_token
+    request = Net::HTTP::Get.new(url.request_uri, headers)
+
+    response = http.request(request)
+    obj = JSON.parse(response.body)
+
+    if obj["meta"]["httpStatus"] != '200 - OK'
+      raise Exception.new response.body
+    end
+
+    Rails.logger.info response.body
+
+    obj
+  end
+
+
+  def do_qualtrics_list(course_id, http, mailing_list_id, students_list, survey_id, magic_field_name, distrib_name)
+    if students_list.any?
+      create_command = {}
+      create_command["surveyId"] = survey_id
+      create_command["description"] = "#{distrib_name} distribution from sync #{DateTime.now}"
+      create_command["action"] = "CreateDistribution"
+      create_command["mailingListId"] = mailing_list_id
+
+   
+      url = URI.parse("https://#{BeyondZConfiguration.qualtrics_host}/API/v3/distributions")
+
+      headers = {}
+      headers["Content-Type"] = "application/json"
+      headers["X-API-TOKEN"] = BeyondZConfiguration.qualtrics_api_token
+
+      request = Net::HTTP::Post.new(url.request_uri, headers)
+      request.body = create_command.to_json
+
+      response = http.request(request)
+      obj = JSON.parse(response.body)
+
+      if obj["meta"]["httpStatus"] != '200 - OK'
+        raise Exception.new response.body
+      end
+
+      Rails.logger.info response.body
+
+      create_id = obj["result"]["id"]
+
+      obj = fetch_qualtrics_links(http, create_id, survey_id)
+
+      tries = 0
+      while tries < 10 && obj["result"]["elements"].empty?
+        tries += 1
+        sleep(tries * 2) # sleep longer and longer so we don't over-poll
+        obj = fetch_qualtrics_links(http, create_id, survey_id)
+      end
+
+      handle_qualtrics_page(obj, students_list, course_id, magic_field_name)
+
+      while !obj["result"]["nextPage"].blank?
+        Rails.logger.info "next page " + obj["result"]["nextPage"]
+        url = URI.parse(obj["result"]["nextPage"])
+
+        headers = {}
+        headers["X-API-TOKEN"] = BeyondZConfiguration.qualtrics_api_token
+        request = Net::HTTP::Get.new(url.request_uri, headers)
+
+        response = http.request(request)
+        obj = JSON.parse(response.body)
+
+        if obj["meta"]["httpStatus"] != '200 - OK'
+          raise Exception.new response.body
+        end
+
+        Rails.logger.info response.body
+
+        handle_qualtrics_page(obj, students_list, course_id, magic_field_name)
+      end
+    end
+  end
+
+  def handle_qualtrics_page(obj, students_list, course_id, magic_field_name)
+    obj["result"]["elements"].each do |contact|
+      students_list.each do |student|
+        if student.email == contact["email"]
+          r = RetainedData.get_for_course(course_id, student.id, magic_field_name)
+          if r.nil?
+            r = RetainedData.new
+            r.user_id = student.id
+            r.name = magic_field_name
+          end
+          r.value = contact["link"]
+          r.save
+        end
+      end
+    end
+  end
+
+  # end qualtrics
 end

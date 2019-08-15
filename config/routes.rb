@@ -44,6 +44,12 @@ CanvasRails::Application.routes.draw do
   post 'bz/linked_in_export' => 'bz#do_linked_in_export'
   get 'bz/linked_in_export_oauth_success' => 'bz#linked_in_export_oauth_success'
 
+  post 'bz/prepare_qualtrics_links' => 'bz#prepare_qualtrics_links'
+  get 'bz/prepare_qualtrics_links' => 'bz#prepare_qualtrics_links'
+
+  get '/bz/pdf_annotator' => 'bz#pdf_annotator'
+  post '/bz/submission_comment' => 'bz#submission_comment'
+
   get 'bz/accessibility_mapper' => 'bz#accessibility_mapper'
   post 'bz/accessibility_mapper' => 'bz#save_html_changes'
   get 'bz/full_module_view' => 'bz#full_module_view'
@@ -56,6 +62,14 @@ CanvasRails::Application.routes.draw do
 
   # Also a BZ addition: for managing the magic field schema
   resources :magic_field_schema
+
+  # docusign stuff
+  get 'bz/docusign_authorize' => 'bz#docusign_authorize'
+  get 'bz/docusign_redirect' => 'bz#docusign_redirect'
+
+  get 'bz/docusign_for_user' => 'bz#docusign_for_user'
+  get 'bz/docusign_user_redirect' => 'bz#docusign_user_redirect'
+  #
 
   # IMPORTANT: there are more custom routes below, search for 'bz'
   # end
